@@ -110,6 +110,17 @@ function distIcon(txt){
 }
 
 /* ---------- Pintar el campo ---------- */
+function smoothClosed(pts, iters){
+  if(!pts||pts.length<3) return pts;
+  iters=iters||2; let p=pts.map(c=>[c[0],c[1]]);
+  for(let k=0;k<iters;k++){ const out=[];
+    for(let i=0;i<p.length;i++){ const a=p[i], b=p[(i+1)%p.length];
+      out.push([a[0]*0.75+b[0]*0.25, a[1]*0.75+b[1]*0.25]);
+      out.push([a[0]*0.25+b[0]*0.75, a[1]*0.25+b[1]*0.75]); }
+    p=out; }
+  return p;
+}
+
 function render(doc){
   layer.clearLayers();
   holeBounds = {};
@@ -120,7 +131,7 @@ function render(doc){
   holes.forEach(h=>{
     const pts=[];
     if(h.polygon && h.polygon.length){
-      L.polygon(h.polygon, {color:'#22c55e',weight:2,fillColor:'#22c55e',fillOpacity:.18}).addTo(layer);
+      L.polygon(smoothClosed(h.polygon,2), {color:'#22c55e',weight:2,fillColor:'#22c55e',fillOpacity:.18,lineJoin:'round',lineCap:'round'}).addTo(layer);
       h.polygon.forEach(p=>{ pts.push(p); allPts.push(p); });
       L.marker(polyCentroid(h.polygon), {interactive:false, icon:numberIcon(h.number)}).addTo(layer);
     }
