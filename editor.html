@@ -1,0 +1,548 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Editor de hoyos · Golf de Llanes</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#171b22; --panel2:#1f2530; --ink:#e8eaed; --soft:#9aa0a6;
+    --line:rgba(255,255,255,.10); --accent:#16a34a; --accent2:#22c55e;
+    --tee:#3b82f6; --green:#16a34a; --warn:#f59e0b; --danger:#ef4444;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;font-family:'Segoe UI',Roboto,system-ui,sans-serif;background:var(--bg);color:var(--ink)}
+  #app{display:flex;height:100vh}
+  #side{width:340px;flex:0 0 340px;background:var(--panel);border-right:1px solid var(--line);
+        display:flex;flex-direction:column;overflow:hidden}
+  #map{flex:1;background:#000}
+  .head{padding:14px 16px;border-bottom:1px solid var(--line)}
+  .head h1{margin:0;font-size:16px;font-weight:600;letter-spacing:-.01em}
+  .head p{margin:4px 0 0;font-size:12px;color:var(--soft);line-height:1.4}
+  .sec{padding:12px 16px;border-bottom:1px solid var(--line)}
+  .sec label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--soft);margin-bottom:6px}
+  .btn{display:inline-flex;align-items:center;gap:6px;padding:8px 12px;border-radius:9px;border:1px solid var(--line);
+       background:var(--panel2);color:var(--ink);font-size:13px;cursor:pointer;transition:.15s}
+  .btn:hover{background:#2a3140;border-color:#3a4250}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  .btn.primary:hover{background:var(--accent2)}
+  .btn.warn{background:transparent;border-color:var(--warn);color:var(--warn)}
+  .btn.danger{background:transparent;border-color:var(--danger);color:var(--danger)}
+  .btn.sm{padding:5px 8px;font-size:12px}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  .row{display:flex;gap:8px;flex-wrap:wrap}
+  .row.nowrap{flex-wrap:nowrap}
+  input[type=text],input[type=number]{width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--line);
+       background:var(--bg);color:var(--ink);font-size:13px}
+  #holes{flex:1;overflow:auto;padding:8px 12px}
+  .hole{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:10px;margin-bottom:6px;
+        background:var(--panel2);border:1px solid transparent;cursor:pointer;transition:.12s}
+  .hole:hover{border-color:#3a4250}
+  .hole.active{border-color:var(--accent);background:#16251c}
+  .hole .num{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:13px;
+             background:#2a3140;flex:0 0 26px}
+  .hole.done .num{background:var(--accent);color:#fff}
+  .hole .info{flex:1;min-width:0}
+  .hole .info b{font-size:13px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .hole .info small{font-size:11px;color:var(--soft)}
+  .hole .flags{display:flex;gap:4px;font-size:11px}
+  .chip{padding:1px 6px;border-radius:6px;background:#0e1116;border:1px solid var(--line);color:var(--soft)}
+  .chip.ok{color:var(--accent2);border-color:rgba(34,197,94,.4)}
+  .tools{display:none;gap:6px;flex-direction:column}
+  .tools.show{display:flex}
+  .hint{font-size:11px;color:var(--soft);line-height:1.4;margin-top:4px}
+  .mode-active{outline:2px solid var(--warn);outline-offset:1px}
+  .foot{padding:10px 16px;border-top:1px solid var(--line);font-size:11px;color:var(--soft)}
+  #status{padding:8px 16px;font-size:12px;color:var(--accent2);min-height:18px}
+  #saved{font-size:10px;color:var(--soft);padding:0 16px 6px}
+  .leaflet-container{background:#000}
+  .photo-dot{border-radius:50%;border:1.5px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.4)}
+  .teeflag,.greenflag{font-size:22px;text-shadow:0 1px 3px rgba(0,0,0,.7);text-align:center;line-height:1}
+</style>
+</head>
+<body>
+<div id="app">
+  <aside id="side">
+    <div class="head">
+      <h1>⛳ Editor de hoyos · Llanes</h1>
+      <p>Dibuja el área de cada hoyo sobre el satélite y marca el tee y el green. Exporta un único <code>holes.json</code> con los 18.</p>
+    </div>
+
+    <div class="sec">
+      <label>Ir al campo</label>
+      <div class="row nowrap">
+        <input type="text" id="goto" placeholder="Golf Llanes · o pega lat,lng / enlace Maps">
+        <button class="btn sm" id="btn-goto">Ir</button>
+      </div>
+      <div class="hint">Busca el campo por nombre, o pega unas coordenadas / un enlace de Google Maps para centrar el mapa exactamente.</div>
+    </div>
+
+    <div class="sec">
+      <label>Datos del campo (opcional)</label>
+      <input type="text" id="course-name" placeholder="Nombre del campo (ej. Golf de Llanes)">
+      <div class="row" style="margin-top:8px">
+        <button class="btn sm" id="btn-load-photos">📷 Cargar golf.json</button>
+        <button class="btn sm" id="btn-load-holes">📂 Cargar holes.json</button>
+      </div>
+      <input type="file" id="file-photos" accept=".json" hidden>
+      <input type="file" id="file-holes" accept=".json" hidden>
+      <div class="hint" id="photos-info">Sin fotos. Puedes dibujar los hoyos igualmente; carga golf.json solo si quieres asignar las fotos 360°.</div>
+    </div>
+
+    <div class="sec">
+      <label>Hoyo seleccionado</label>
+      <div class="tools" id="tools">
+        <div class="row">
+          <input type="number" id="hole-par" min="3" max="6" placeholder="Par" style="width:64px">
+          <input type="number" id="hole-hcp" min="1" max="18" placeholder="HCP" style="width:64px">
+          <input type="text" id="hole-name" placeholder="Nombre" style="flex:1;min-width:90px">
+        </div>
+        <div class="row">
+          <button class="btn sm" id="btn-poly">✏️ Dibujar área</button>
+          <button class="btn sm" id="btn-tee">🚩 Marcar tee</button>
+          <button class="btn sm" id="btn-green">⛳ Marcar green</button>
+        </div>
+        <div class="row">
+          <button class="btn sm warn" id="btn-clear-poly">Borrar área</button>
+          <button class="btn sm" id="btn-assign">↻ Reasignar fotos</button>
+        </div>
+        <div class="hint" id="hole-hint">Selecciona un hoyo de la lista para editarlo.</div>
+      </div>
+    </div>
+
+    <label class="sec" style="border:none;padding-bottom:0">Hoyos</label>
+    <div id="holes"></div>
+
+    <div id="status"></div>
+    <div id="saved"></div>
+    <div class="sec" style="border-bottom:none">
+      <button class="btn primary" id="btn-export" style="width:100%">💾 Exportar holes.json</button>
+      <div class="row" style="margin-top:8px">
+        <button class="btn sm danger" id="btn-reset" style="flex:1">🗑️ Reiniciar todo</button>
+      </div>
+    </div>
+    <div class="foot">El área pinta la calle; tee y green orientan el recorrido tee→green. Se guarda solo en este navegador a cada cambio.</div>
+  </aside>
+  <div id="map"></div>
+</div>
+
+<script>
+"use strict";
+
+/* ---------- Estado ---------- */
+const N_HOLES = 18;
+const LS_KEY = 'golf_llanes_editor_v1';
+// Rasa entre Andrín y Cué (La Cuesta), donde está el campo real de Llanes.
+const LLANES_CENTER = [43.419, -4.712];
+const LLANES_ZOOM = 15;
+
+let photos = [];          // [{id,lat,lng,heading,thumbnail_url,share_link,...}]
+let holes = [];           // [{number,par,name,polygon:[[lat,lng]],tee:[lat,lng],green:[lat,lng],photo_ids:[]}]
+let activeHole = null;    // número de hoyo activo
+let mode = null;          // 'tee' | 'green' | null
+let courseName = "";
+
+/* ---------- Mapa ---------- */
+const map = L.map('map', { zoomControl:true, center:LLANES_CENTER, zoom:LLANES_ZOOM });
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+  { attribution:'Esri World Imagery', maxZoom:19 }).addTo(map);
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+  { maxZoom:19, opacity:.9 }).addTo(map);
+
+const photoLayer = L.layerGroup().addTo(map);   // todos los puntos
+const holeLayers = L.layerGroup().addTo(map);   // polígonos + tee/green de TODOS los hoyos
+let drawnPoly = null;                            // polígono del hoyo activo
+let teeMarker = null, greenMarker = null;
+
+/* ---------- Inicialización de hoyos vacíos ---------- */
+function freshHoles(){
+  return Array.from({length:N_HOLES}, (_,i)=>({
+    number:i+1, par:null, hcp:null, name:"", polygon:null, tee:null, green:null, photo_ids:[]
+  }));
+}
+holes = freshHoles();
+
+/* ---------- Utilidades geográficas ---------- */
+function pointInPoly(lat, lng, poly){          // poly: [[lat,lng],...]
+  let inside = false;
+  for (let i=0, j=poly.length-1; i<poly.length; j=i++){
+    const yi=poly[i][0], xi=poly[i][1], yj=poly[j][0], xj=poly[j][1];
+    const intersect = ((yi>lat)!==(yj>lat)) && (lng < (xj-xi)*(lat-yi)/(yj-yi)+xi);
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+/* ---------- Persistencia en localStorage ---------- */
+let saveTimer = null;
+function persist(){
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(()=>{
+    try{
+      localStorage.setItem(LS_KEY, JSON.stringify({ course_name:courseName, holes }));
+      const t = new Date().toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+      document.getElementById('saved').textContent = '✓ Guardado en este navegador · '+t;
+    }catch(err){ document.getElementById('saved').textContent = 'No se pudo guardar localmente: '+err.message; }
+  }, 300);
+}
+function restore(){
+  try{
+    const raw = localStorage.getItem(LS_KEY);
+    if(!raw) return false;
+    const doc = JSON.parse(raw);
+    courseName = doc.course_name || "";
+    document.getElementById('course-name').value = courseName;
+    loadHolesFromArray(doc.holes||[]);
+    return holes.some(h=>h.polygon||h.tee||h.green);
+  }catch(err){ return false; }
+}
+
+function loadHolesFromArray(arr){
+  holes = freshHoles();
+  arr.forEach(h=>{
+    const idx = (h.number||0)-1;
+    if(idx>=0 && idx<N_HOLES){
+      holes[idx] = {
+        number:h.number, par:h.par??null, hcp:h.hcp??null, name:h.name||"",
+        polygon:h.polygon||null, tee:h.tee||null, green:h.green||null,
+        photo_ids:h.photo_ids||[]
+      };
+    }
+  });
+}
+
+/* ---------- Buscador "Ir a" ---------- */
+// Acepta: "lat,lng" · enlace de Google Maps (@lat,lng o !3dlat!4dlng) · texto libre (geocoder Nominatim).
+function parseLatLng(text){
+  const m = text.match(/(-?\d{1,3}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)/);   // "43.41,-4.71"
+  if(m) return [parseFloat(m[1]), parseFloat(m[2])];
+  const at = text.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);              // Maps .../@43.41,-4.71,17z
+  if(at) return [parseFloat(at[1]), parseFloat(at[2])];
+  const pb = text.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/);          // Maps embed !3dlat!4dlng
+  if(pb) return [parseFloat(pb[1]), parseFloat(pb[2])];
+  return null;
+}
+async function goTo(){
+  const text = document.getElementById('goto').value.trim();
+  if(!text) return;
+  const ll = parseLatLng(text);
+  if(ll){ map.setView(ll, 17); setStatus(`Centrado en ${ll[0].toFixed(5)}, ${ll[1].toFixed(5)}.`); return; }
+  setStatus('Buscando…');
+  try{
+    const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&q='+encodeURIComponent(text);
+    const res = await fetch(url, { headers:{ 'Accept-Language':'es' } });
+    const data = await res.json();
+    if(data.length){ map.setView([+data[0].lat, +data[0].lon], 16); setStatus('Encontrado: '+data[0].display_name); }
+    else setStatus('No se encontró ese lugar. Prueba con coordenadas lat,lng.');
+  }catch(err){ setStatus('Búsqueda no disponible sin conexión. Pega coordenadas lat,lng en su lugar.'); }
+}
+document.getElementById('btn-goto').onclick = goTo;
+document.getElementById('goto').addEventListener('keydown', e=>{ if(e.key==='Enter') goTo(); });
+
+/* ---------- Carga de archivos ---------- */
+document.getElementById('btn-load-photos').onclick = ()=>document.getElementById('file-photos').click();
+document.getElementById('btn-load-holes').onclick = ()=>document.getElementById('file-holes').click();
+
+document.getElementById('file-photos').onchange = (e)=>{
+  const f = e.target.files[0]; if(!f) return;
+  const r = new FileReader();
+  r.onload = ()=>{
+    try{
+      const doc = JSON.parse(r.result);
+      photos = (doc.photos||[]).filter(p=>p.lat!=null && p.lng!=null);
+      if(!courseName){ courseName = doc.place_name || "Golf de Llanes"; document.getElementById('course-name').value = courseName; persist(); }
+      document.getElementById('photos-info').textContent = `${photos.length} fotos cargadas (${doc.place_name||'campo'}). Reasigna por hoyo si hace falta.`;
+      renderPhotos();
+      if(photos.length){
+        const lat = photos.reduce((s,p)=>s+p.lat,0)/photos.length;
+        const lng = photos.reduce((s,p)=>s+p.lng,0)/photos.length;
+        map.setView([lat,lng], 16);
+      }
+      setStatus('Fotos cargadas.');
+    }catch(err){ alert('golf.json inválido: '+err.message); }
+  };
+  r.readAsText(f);
+};
+
+document.getElementById('file-holes').onchange = (e)=>{
+  const f = e.target.files[0]; if(!f) return;
+  const r = new FileReader();
+  r.onload = ()=>{
+    try{
+      const doc = JSON.parse(r.result);
+      courseName = doc.course_name || courseName;
+      document.getElementById('course-name').value = courseName;
+      loadHolesFromArray(doc.holes||[]);
+      activeHole = null;
+      document.getElementById('tools').classList.remove('show');
+      clearActiveOverlay();
+      renderHoleList(); renderAllHoles();
+      fitToHoles();
+      persist();
+      setStatus('holes.json cargado. Continúa editando.');
+    }catch(err){ alert('holes.json inválido: '+err.message); }
+  };
+  r.readAsText(f);
+};
+
+document.getElementById('course-name').oninput = (e)=>{ courseName = e.target.value; persist(); };
+
+/* ---------- Render de fotos ---------- */
+function renderPhotos(){
+  photoLayer.clearLayers();
+  const activeIds = activeHole ? new Set(holes[activeHole-1].photo_ids) : null;
+  photos.forEach(p=>{
+    const inActive = activeIds && activeIds.has(p.id);
+    L.circleMarker([p.lat,p.lng], {
+      radius: inActive?5:3,
+      color: inActive?'#fde047':'#fff',
+      weight: inActive?2:1,
+      fillColor: inActive?'#facc15':'#38bdf8',
+      fillOpacity:.9, className:'photo-dot'
+    }).addTo(photoLayer);
+  });
+}
+
+/* ---------- Lista de hoyos (DOM seguro, sin innerHTML) ---------- */
+function renderHoleList(){
+  const cont = document.getElementById('holes');
+  cont.replaceChildren();
+  holes.forEach(h=>{
+    const done = h.polygon && h.tee && h.green;
+    const el = document.createElement('div');
+    el.className = 'hole'+(h.number===activeHole?' active':'')+(done?' done':'');
+
+    const num = document.createElement('div');
+    num.className = 'num'; num.textContent = h.number;
+
+    const info = document.createElement('div');
+    info.className = 'info';
+    const title = document.createElement('b');
+    title.textContent = `Hoyo ${h.number}${h.name?' · '+h.name:''}`;
+    const sub = document.createElement('small');
+    sub.textContent = `${h.par?('Par '+h.par+' · '):''}${h.photo_ids.length} fotos`;
+    info.append(title, sub);
+
+    const flags = document.createElement('div');
+    flags.className = 'flags';
+    [['área',h.polygon],['tee',h.tee],['green',h.green]].forEach(([txt,ok])=>{
+      const c = document.createElement('span');
+      c.className = 'chip'+(ok?' ok':''); c.textContent = txt;
+      flags.appendChild(c);
+    });
+
+    el.append(num, info, flags);
+    el.onclick = ()=>selectHole(h.number);
+    cont.appendChild(el);
+  });
+}
+
+/* ---------- Polígonos/tee/green de todos los hoyos (vista superpuesta) ---------- */
+function renderAllHoles(){
+  holeLayers.clearLayers();
+  holes.forEach(h=>{
+    if(h.number===activeHole) return; // el activo se dibuja editable aparte
+    if(h.polygon){
+      L.polygon(h.polygon, {color:'#22c55e',weight:1.5,fillOpacity:.12,interactive:false}).addTo(holeLayers);
+      L.marker(polyCentroid(h.polygon), {interactive:false, icon:numberIcon(h.number)}).addTo(holeLayers);
+    }
+    if(h.tee) flagMarker(h.tee,'tee',h.number,false).addTo(holeLayers);
+    if(h.green) flagMarker(h.green,'green',h.number,false).addTo(holeLayers);
+  });
+}
+
+function numberIcon(num){
+  const el = document.createElement('div');
+  el.style.cssText = 'background:#16a34a;color:#fff;border:1.5px solid #fff;border-radius:50%;width:22px;height:22px;display:grid;place-items:center;font:700 12px/1 sans-serif;box-shadow:0 1px 4px rgba(0,0,0,.6)';
+  el.textContent = num;
+  return L.divIcon({ className:'', iconSize:[22,22], iconAnchor:[11,11], html:el });
+}
+
+function polyCentroid(poly){
+  let lat=0,lng=0;
+  poly.forEach(p=>{ lat+=p[0]; lng+=p[1]; });
+  return [lat/poly.length, lng/poly.length];
+}
+
+function flagMarker(latlng, kind, num, draggable){
+  const el = document.createElement('div');
+  el.className = kind==='tee'?'teeflag':'greenflag';
+  el.textContent = kind==='tee'?'🚩':'⛳';
+  const icon = L.divIcon({ className:'', html:el, iconSize:[24,24], iconAnchor:[12,22] });
+  return L.marker(latlng, {icon, draggable, title:`Hoyo ${num} · ${kind}`});
+}
+
+function fitToHoles(){
+  const pts = [];
+  holes.forEach(h=>{
+    if(h.polygon) h.polygon.forEach(p=>pts.push(p));
+    if(h.tee) pts.push(h.tee);
+    if(h.green) pts.push(h.green);
+  });
+  if(pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.2));
+}
+
+/* ---------- Selección de hoyo ---------- */
+function selectHole(num){
+  clearActiveOverlay();
+  activeHole = num;
+  mode = null; clearModeButtons();
+  const h = holes[num-1];
+  document.getElementById('tools').classList.add('show');
+  document.getElementById('hole-par').value = h.par ?? '';
+  document.getElementById('hole-hcp').value = h.hcp ?? '';
+  document.getElementById('hole-name').value = h.name ?? '';
+  document.getElementById('hole-hint').textContent =
+    `Hoyo ${num}: dibuja el área, marca tee y green. Las fotos dentro del área se asignan solas.`;
+  renderHoleList(); renderAllHoles(); renderPhotos();
+
+  if(h.polygon){
+    drawnPoly = L.polygon(h.polygon, {color:'#facc15',weight:2.5,fillOpacity:.15}).addTo(map);
+    map.fitBounds(drawnPoly.getBounds().pad(0.3));
+  }
+  if(h.tee) setTee(h.tee, false);
+  if(h.green) setGreen(h.green, false);
+}
+
+function clearActiveOverlay(){
+  if(drawnPoly){ map.removeLayer(drawnPoly); drawnPoly=null; }
+  if(teeMarker){ map.removeLayer(teeMarker); teeMarker=null; }
+  if(greenMarker){ map.removeLayer(greenMarker); greenMarker=null; }
+}
+
+/* ---------- Dibujo de polígono (Leaflet.draw) ---------- */
+let drawHandler = null;
+document.getElementById('btn-poly').onclick = ()=>{
+  if(!activeHole){ setStatus('Selecciona un hoyo primero.'); return; }
+  if(drawnPoly){ map.removeLayer(drawnPoly); drawnPoly=null; }
+  mode=null; clearModeButtons();
+  drawHandler = new L.Draw.Polygon(map, {
+    shapeOptions:{color:'#facc15',weight:2.5,fillOpacity:.15},
+    allowIntersection:false, showArea:false
+  });
+  drawHandler.enable();
+  setStatus('Clic para añadir vértices · doble clic para cerrar el área.');
+};
+
+map.on(L.Draw.Event.CREATED, (e)=>{
+  const latlngs = e.layer.getLatLngs()[0].map(ll=>[ll.lat,ll.lng]);
+  drawnPoly = L.polygon(latlngs, {color:'#facc15',weight:2.5,fillOpacity:.15}).addTo(map);
+  const h = holes[activeHole-1];
+  h.polygon = latlngs;
+  assignPhotos();
+  renderHoleList(); persist();
+  setStatus(`Área del hoyo ${activeHole} guardada · ${h.photo_ids.length} fotos dentro.`);
+});
+
+document.getElementById('btn-clear-poly').onclick = ()=>{
+  if(!activeHole) return;
+  if(drawnPoly){ map.removeLayer(drawnPoly); drawnPoly=null; }
+  holes[activeHole-1].polygon = null;
+  holes[activeHole-1].photo_ids = [];
+  renderHoleList(); renderPhotos(); persist();
+  setStatus(`Área del hoyo ${activeHole} borrada.`);
+};
+
+document.getElementById('btn-assign').onclick = ()=>{
+  if(!activeHole) return;
+  assignPhotos();
+  renderHoleList(); renderPhotos(); persist();
+  setStatus(`Reasignadas ${holes[activeHole-1].photo_ids.length} fotos al hoyo ${activeHole}.`);
+};
+
+function assignPhotos(){
+  const h = holes[activeHole-1];
+  if(!h.polygon){ h.photo_ids=[]; return; }
+  h.photo_ids = photos.filter(p=>pointInPoly(p.lat,p.lng,h.polygon)).map(p=>p.id);
+}
+
+/* ---------- Tee / Green ---------- */
+document.getElementById('btn-tee').onclick = ()=>toggleMode('tee');
+document.getElementById('btn-green').onclick = ()=>toggleMode('green');
+
+function toggleMode(m){
+  if(!activeHole){ setStatus('Selecciona un hoyo primero.'); return; }
+  mode = (mode===m)?null:m;
+  clearModeButtons();
+  if(mode){
+    document.getElementById('btn-'+m).classList.add('mode-active');
+    setStatus(m==='tee'?'Clic en el mapa para situar el TEE de salida.':'Clic en el mapa para situar el GREEN (bandera).');
+  }
+}
+function clearModeButtons(){
+  document.getElementById('btn-tee').classList.remove('mode-active');
+  document.getElementById('btn-green').classList.remove('mode-active');
+}
+
+map.on('click', (e)=>{
+  if(!activeHole || !mode) return;
+  const ll = [e.latlng.lat, e.latlng.lng];
+  if(mode==='tee') setTee(ll, true);
+  else setGreen(ll, true);
+  holes[activeHole-1][mode] = ll;
+  mode=null; clearModeButtons(); renderHoleList(); persist();
+  setStatus(`${activeHole}: ${ (holes[activeHole-1].tee?'tee ✓ ':'') + (holes[activeHole-1].green?'green ✓':'') }`);
+});
+
+function setTee(ll, drag){
+  if(teeMarker) map.removeLayer(teeMarker);
+  teeMarker = flagMarker(ll,'tee',activeHole,true).addTo(map);
+  teeMarker.on('dragend', ()=>{ const p=teeMarker.getLatLng(); holes[activeHole-1].tee=[p.lat,p.lng]; persist(); });
+}
+function setGreen(ll, drag){
+  if(greenMarker) map.removeLayer(greenMarker);
+  greenMarker = flagMarker(ll,'green',activeHole,true).addTo(map);
+  greenMarker.on('dragend', ()=>{ const p=greenMarker.getLatLng(); holes[activeHole-1].green=[p.lat,p.lng]; persist(); });
+}
+
+/* ---------- Par / nombre ---------- */
+document.getElementById('hole-par').oninput = (e)=>{ if(activeHole){ holes[activeHole-1].par = e.target.value?Number(e.target.value):null; renderHoleList(); persist(); } };
+document.getElementById('hole-hcp').oninput = (e)=>{ if(activeHole){ holes[activeHole-1].hcp = e.target.value?Number(e.target.value):null; persist(); } };
+document.getElementById('hole-name').oninput = (e)=>{ if(activeHole){ holes[activeHole-1].name = e.target.value; renderHoleList(); persist(); } };
+
+/* ---------- Exportar ---------- */
+document.getElementById('btn-export').onclick = ()=>{
+  const out = {
+    course_name: courseName || "Golf de Llanes",
+    generated_at: new Date().toISOString(),
+    holes: holes.filter(h=>h.polygon||h.tee||h.green).map(h=>({
+      number:h.number, par:h.par, hcp:h.hcp??null, name:h.name||null,
+      polygon:h.polygon, tee:h.tee, green:h.green, photo_ids:h.photo_ids
+    }))
+  };
+  if(!out.holes.length){ setStatus('Nada que exportar todavía: dibuja al menos un hoyo.'); return; }
+  const blob = new Blob([JSON.stringify(out,null,2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = 'holes.json'; a.click();
+  setStatus(`Exportados ${out.holes.length} hoyos a holes.json.`);
+};
+
+/* ---------- Reiniciar ---------- */
+document.getElementById('btn-reset').onclick = ()=>{
+  if(!confirm('¿Borrar todo lo dibujado en este navegador y empezar de cero? (No afecta a los holes.json que ya hayas exportado.)')) return;
+  localStorage.removeItem(LS_KEY);
+  holes = freshHoles(); courseName = ""; activeHole = null; mode=null;
+  document.getElementById('course-name').value = '';
+  document.getElementById('tools').classList.remove('show');
+  clearActiveOverlay(); renderHoleList(); renderAllHoles();
+  document.getElementById('saved').textContent = '';
+  setStatus('Editor reiniciado.');
+};
+
+function setStatus(msg){ document.getElementById('status').textContent = msg; }
+
+/* ---------- Arranque ---------- */
+if(restore()){
+  renderHoleList(); renderAllHoles(); fitToHoles();
+  setStatus('Recuperado lo que tenías guardado en este navegador.');
+}else{
+  renderHoleList();
+  setStatus('Centra el mapa en el campo y selecciona el hoyo 1 para empezar.');
+}
+</script>
+</body>
+</html>
